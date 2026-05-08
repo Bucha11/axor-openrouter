@@ -7,10 +7,9 @@ import threading
 class AdaptiveRouter:
     """Thread-safe holder of the current tier shift (-1 / 0 / +1).
 
-    The BudgetSubscriber calls `apply_shift()` whenever the policy engine
-    recommends moving up or down a tier.  The executor calls `current_shift()`
-    on every model-resolution call so all subsequent requests respect the
-    latest governance decision.
+    The BudgetSubscriber calls `set_shift()` whenever the policy engine
+    recommends a tier level — this is idempotent and does not accumulate.
+    The executor calls `current_shift()` on every model-resolution call.
     """
 
     def __init__(self, min_shift: int = -2, max_shift: int = 2) -> None:
@@ -27,8 +26,13 @@ class AdaptiveRouter:
         with self._lock:
             return self._shift
 
+    def set_shift(self, value: int) -> None:
+        """Clamp-set the shift to an absolute value (idempotent, no accumulation)."""
+        with self._lock:
+            self._shift = max(self._min, min(self._max, value))
+
     def apply_shift(self, delta: int) -> None:
-        """Clamp-apply a delta to the current shift."""
+        """Clamp-apply a delta to the current shift (accumulating)."""
         with self._lock:
             self._shift = max(self._min, min(self._max, self._shift + delta))
 

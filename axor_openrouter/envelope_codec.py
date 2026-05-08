@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from axor_core.contracts.envelope import ExecutionEnvelope
 
+if TYPE_CHECKING:
+    from axor_core.contracts.envelope import CacheHints
 
-# ── Message construction ────────────────────────────────────────────────────────
+
+# ── Message construction ──────────────────────────────────────────────
 
 def build_messages(
     envelope: ExecutionEnvelope,
-    cache_hints: dict | None = None,
+    cache_hints: "CacheHints | None" = None,
 ) -> list[dict]:
     """
     Convert an ExecutionEnvelope into an OpenAI-compatible messages list.
@@ -22,13 +25,13 @@ def build_messages(
         3. [user]    the actual task
 
     cache_hints overrides envelope.cache_hints when provided.
-    When cache_hints.blocks contains "system", the system message content
-    is structured as a list of text blocks with cache_control.
+    When cache_hints.cacheable_blocks contains "system", the system message
+    content is structured as a list of text blocks with cache_control.
     """
-    hints = cache_hints if cache_hints is not None else (envelope.cache_hints or {})
+    hints = cache_hints if cache_hints is not None else envelope.cache_hints
     messages: list[dict] = []
 
-    # ─ 1. System message ──────────────────────────────────────────────────────────
+    # ─ 1. System message ────────────────────────────────────────────────────
     skill_parts: list[str] = [
         f.content
         for f in envelope.context.visible_fragments
@@ -42,8 +45,8 @@ def build_messages(
 
     if skill_parts:
         combined_system = "\n\n---\n\n".join(skill_parts)
-        if "system" in hints.get("blocks", []):
-            ttl = _ttl_to_seconds(hints.get("ttl", "5m"))
+        if hints is not None and "system" in hints.cacheable_blocks:
+            ttl = _ttl_to_seconds(hints.ttl or "5m")
             system_content: Any = [
                 {
                     "type": "text",
@@ -55,7 +58,7 @@ def build_messages(
             system_content = combined_system
         messages.append({"role": "system", "content": system_content})
 
-    # ─ 2. Context message (history + memory) ────────────────────────────────────
+    # ─ 2. Context message (history + memory) ────────────────────────────
     ctx_parts: list[str] = []
 
     summary = envelope.context.working_summary or ""
@@ -72,8 +75,8 @@ def build_messages(
 
     if ctx_parts:
         ctx_text = "\n\n".join(ctx_parts)
-        if "context_top_k" in hints.get("blocks", []):
-            ttl = _ttl_to_seconds(hints.get("ttl", "5m"))
+        if hints is not None and "context_top_k" in hints.cacheable_blocks:
+            ttl = _ttl_to_seconds(hints.ttl or "5m")
             ctx_content: Any = [
                 {
                     "type": "text",
@@ -86,7 +89,7 @@ def build_messages(
         messages.append({"role": "user", "content": ctx_content})
         messages.append({"role": "assistant", "content": "Understood."})
 
-    # ─ 3. Task ───────────────────────────────────────────────────────────────────
+    # ─ 3. Task ────────────────────────────────────────────────────────────
     messages.append({"role": "user", "content": envelope.task})
     return messages
 
@@ -97,7 +100,7 @@ def build_tool_request_messages(
     tool_calls: list[dict],
 ) -> list[dict]:
     """
-    Append the assistant’s tool_calls turn to the conversation.
+    Append the assistant's tool_calls turn to the conversation.
     Returns a new list (does not mutate the input).
     """
     new = list(messages)
@@ -138,7 +141,7 @@ def _format_tool_result(result: Any) -> str:
     return str(result)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────────
 
 def _ttl_to_seconds(ttl: str) -> int:
     """Convert TTL string to seconds. Supports '5m', '1h', raw integer strings."""

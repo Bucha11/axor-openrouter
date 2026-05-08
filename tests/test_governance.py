@@ -8,7 +8,7 @@ from axor_openrouter.governance.cache_health import CacheHealthMonitor
 from axor_openrouter.caching.ttl_chooser import TtlChooser
 
 
-# ── AdaptiveRouter ────────────────────────────────────────────────────────────
+# ── AdaptiveRouter ──────────────────────────────────────────────────────
 
 def test_initial_shift_is_zero():
     r = AdaptiveRouter()
@@ -47,8 +47,30 @@ def test_reset_returns_to_zero():
     r.reset()
     assert r.current_shift() == 0
 
+def test_set_shift_is_absolute():
+    r = AdaptiveRouter()
+    r.set_shift(-1)
+    r.set_shift(-1)  # calling twice stays at -1, not -2
+    assert r.current_shift() == -1
 
-# ── CacheHealthMonitor ────────────────────────────────────────────────────────
+def test_set_shift_clamped_at_max():
+    r = AdaptiveRouter(max_shift=1)
+    r.set_shift(5)
+    assert r.current_shift() == 1
+
+def test_set_shift_clamped_at_min():
+    r = AdaptiveRouter(min_shift=-1)
+    r.set_shift(-5)
+    assert r.current_shift() == -1
+
+def test_set_shift_overrides_previous_apply():
+    r = AdaptiveRouter()
+    r.apply_shift(2)
+    r.set_shift(0)
+    assert r.current_shift() == 0
+
+
+# ── CacheHealthMonitor ────────────────────────────────────────────────
 
 @pytest.fixture()
 def chooser():
@@ -90,11 +112,9 @@ def test_no_downgrade_above_threshold(monitor, chooser):
     assert chooser.choose("system") == "1h"
 
 def test_recovery_restores_session_ttl(monitor, chooser):
-    # Force downgrade
     for _ in range(6):
         monitor.record_miss()
     assert monitor._downgraded is True
-    # Flood with hits to recover
     for _ in range(10):
         monitor.record_hit()
     assert monitor._downgraded is False

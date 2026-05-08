@@ -11,9 +11,9 @@ if TYPE_CHECKING:
 class BudgetSubscriber:
     """Subscribes to a BudgetTracker and drives AdaptiveRouter tier shifts.
 
-    On every `record()` call the tracker fires our callback with a
-    `RecordEvent` dict.  We ask the policy engine whether a tier shift is
-    warranted and forward the recommendation to the AdaptiveRouter.
+    On every `record()` call the tracker fires our callback.  We ask the
+    policy engine for the current tier shift and set it directly on the
+    AdaptiveRouter — using set_shift() so the value never accumulates.
     """
 
     def __init__(
@@ -24,18 +24,12 @@ class BudgetSubscriber:
     ) -> None:
         self._policy = policy
         self._router = router
-        # Keep the unsubscribe callable so callers can detach cleanly.
         self._unsub = tracker.subscribe(self._on_record)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _on_record(self, event: dict) -> None:
         """Called synchronously by BudgetTracker after every record()."""
-        delta = self._policy.suggest_tier_shift()
-        if delta != 0:
-            self._router.apply_shift(delta)
+        shift = self._policy.suggest_tier_shift()
+        self._router.set_shift(shift)
 
     def detach(self) -> None:
         """Remove the subscription from the tracker."""

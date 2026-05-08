@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from axor_core.contracts.envelope import ExecutionEnvelope
+from axor_core.contracts.envelope import CacheHints, ExecutionEnvelope
 from axor_core.contracts.policy import ExecutionPolicy
 from axor_core.worker.session import GovernedSession
 
@@ -40,7 +40,7 @@ from .routing.provider_prefs import ProviderPrefs
 from .routing.fallbacks import DEFAULT_FALLBACKS
 from .routing.byok import BYOKConfig
 
-__all__ = ["make_session", "OpenRouterExecutor"]
+__all__ = ["make_session", "OpenRouterExecutor", "CacheHints"]
 
 
 def make_session(
@@ -50,7 +50,7 @@ def make_session(
     context_text: str = "",
     depth: int = 0,
     parent_node_id: str | None = None,
-    cache_hints: dict[str, Any] | None = None,
+    cache_hints: CacheHints | None = None,
     deterministic: bool = False,
     # Routing / cascade
     tier_config: str | None = None,

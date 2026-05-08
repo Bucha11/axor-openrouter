@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from axor_core.contracts.envelope import CacheHints
+
 from axor_openrouter.envelope_codec import (
     _ttl_to_seconds,
     append_tool_result,
@@ -11,7 +13,7 @@ from axor_openrouter.envelope_codec import (
 )
 
 
-# ── _ttl_to_seconds ───────────────────────────────────────────────────────────
+# ── _ttl_to_seconds ────────────────────────────────────────────────
 
 def test_ttl_minutes():
     assert _ttl_to_seconds("5m") == 300
@@ -29,7 +31,7 @@ def test_ttl_fallback_on_invalid():
     assert _ttl_to_seconds("???") == 300
 
 
-# ── build_messages ────────────────────────────────────────────────────────────
+# ── build_messages ──────────────────────────────────────────────
 
 def test_minimal_envelope_produces_single_user_message(envelope):
     msgs = build_messages(envelope)
@@ -50,10 +52,8 @@ def test_no_system_message_without_skill_fragments(envelope):
 
 
 def test_cache_hints_system_adds_block_list(envelope_with_skill):
-    msgs = build_messages(
-        envelope_with_skill,
-        cache_hints={"blocks": ["system"], "ttl": "5m"},
-    )
+    hints = CacheHints(cacheable_blocks=("system",), ttl="5m")
+    msgs = build_messages(envelope_with_skill, cache_hints=hints)
     system_content = msgs[0]["content"]
     assert isinstance(system_content, list)
     cc = system_content[-1]["cache_control"]
@@ -62,20 +62,18 @@ def test_cache_hints_system_adds_block_list(envelope_with_skill):
 
 
 def test_cache_hints_system_1h_ttl(envelope_with_skill):
-    msgs = build_messages(
-        envelope_with_skill,
-        cache_hints={"blocks": ["system"], "ttl": "1h"},
-    )
+    hints = CacheHints(cacheable_blocks=("system",), ttl="1h")
+    msgs = build_messages(envelope_with_skill, cache_hints=hints)
     assert msgs[0]["content"][-1]["cache_control"]["ttl"] == 3600
 
 
 def test_cache_hints_from_envelope_used_when_no_override(envelope_with_skill):
-    envelope_with_skill.cache_hints = {"blocks": ["system"], "ttl": "5m"}
+    envelope_with_skill.cache_hints = CacheHints(cacheable_blocks=("system",), ttl="5m")
     msgs = build_messages(envelope_with_skill)
     assert isinstance(msgs[0]["content"], list)
 
 
-# ── append_tool_result ────────────────────────────────────────────────────────
+# ── append_tool_result ─────────────────────────────────────────────
 
 def test_append_tool_result_string(envelope):
     msgs = build_messages(envelope)
@@ -104,7 +102,7 @@ def test_append_tool_result_integer(envelope):
     assert msgs[-1]["content"] == "42"
 
 
-# ── build_tool_request_messages ───────────────────────────────────────────────
+# ── build_tool_request_messages ─────────────────────────────────────────
 
 def test_build_tool_request_messages_appends_assistant_turn(envelope):
     msgs = build_messages(envelope)
