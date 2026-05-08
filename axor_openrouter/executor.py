@@ -53,7 +53,7 @@ class OpenRouterExecutor(Invokable):
         return self._bus
 
     async def stream(self, envelope: "ExecutionEnvelope") -> AsyncIterator[ExecutorEvent]:
-        depth = getattr(envelope, 'depth', None) or (envelope.lineage.depth if envelope.lineage else 0)
+        depth = envelope.depth or (envelope.lineage.depth if envelope.lineage else 0)
         model = self._tier_mapper.resolve(depth) if self._tier_mapper else self._default_model
         messages = build_messages(envelope)
         tools = build_tools_with_extensions(envelope)
@@ -150,7 +150,7 @@ class OpenRouterExecutor(Invokable):
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
-        if getattr(envelope, 'deterministic', False):
+        if envelope.deterministic:
             body["temperature"] = 0
         if self._provider_prefs is not None:
             provider_dict = self._provider_prefs.to_dict()
