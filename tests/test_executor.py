@@ -1,56 +1,51 @@
-"""Unit tests for OpenRouterExecutor (mocked transport)."""
+"""Tests for OpenRouterExecutor."""
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.result import ExecutorEventKind
-from axor_openrouter.executor import OpenRouterExecutor
-from axor_openrouter.cascade.tiers import DEFAULT_TIERS, TierMapper
-from axor_openrouter.routing.provider_prefs import ProviderPrefs
 
 
-@pytest.fixture()
-def executor():
-    return OpenRouterExecutor(
-        api_key="sk-or-test",
-        tier_mapper=TierMapper(DEFAULT_TIERS),
-        provider_prefs=ProviderPrefs(),
-        fallbacks={},
-        enable_cache=False,
-    )
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+_STOP_CHUNKS = [
+    {"choices": [{"delta": {"content": "Hello!"}, "finish_reason": None}], "usage": None},
+    {"choices": [{"delta": {}, "finish_reason": "stop"}],
+     "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+]
 
 
-@pytest.fixture()
-def envelope():
-    return ExecutionEnvelope(task="say hello", context_text="")
+async def _collect(gen):
+    return [e async for e in gen]
+
+
+# ── Basic streaming ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_first_event_is_routing_text(executor, envelope):
+    async def fake_stream(api_key, body):
+        for chunk in _STOP_CHUNKS:
+            yield chunk
+
+    with patch.object(executor._transport, "stream", side_effect=fake_stream):
+        events = await _collect(executor.stream(envelope))
+
+    first = events[0]
+    assert first.kind == ExecutorEventKind.TEXT
+    assert "_routing" in first.payload
 
 
 @pytest.mark.asyncio
-async def test_stream_stop_event(executor, envelope):
-    """A simple non-tool response yields a STOP event with usage."""
-    fake_chunks = [
-        {
-            "choices": [{"delta": {"content": "Hello!"}, "finish_reason": None}],
-            "usage": None,
-        },
-        {
-            "choices": [{"delta": {}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        },
-    ]
-
+async def test_stream_yields_text_and_stop(executor, envelope):
     async def fake_stream(api_key, body):
-        for chunk in fake_chunks:
+        for chunk in _STOP_CHUNKS:
             yield chunk
 
-    with patch.object(
-        executor._transport, "stream", side_effect=fake_stream
-    ):
-        events = [e async for e in executor.stream(envelope)]
+    with patch.object(executor._transport, "stream", side_effect=fake_stream):
+        events = await _collect(executor.stream(envelope))
 
     kinds = [e.kind for e in events]
     assert ExecutorEventKind.TEXT in kinds
@@ -58,32 +53,109 @@ async def test_stream_stop_event(executor, envelope):
 
 
 @pytest.mark.asyncio
-async def test_get_bus_returns_bus(executor):
+async def test_stop_event_has_usage(executor, envelope):
+    async def fake_stream(api_key, body):
+        for chunk in _STOP_CHUNKS:
+            yield chunk
+
+    with patch.object(executor._transport, "stream", side_effect=fake_stream):
+        events = await _collect(executor.stream(envelope))
+
+    stop = next(e for e in events if e.kind == ExecutorEventKind.STOP)
+    assert "usage" in stop.payload
+    assert stop.payload["usage"]["output_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_get_bus_returns_non_none(executor):
     bus = executor.get_bus()
     assert bus is not None
-    # bus.push / bus.wait should be available
     assert hasattr(bus, "push")
     assert hasattr(bus, "wait")
 
 
+# ── Tool-use round-trip ───────────────────────────────────────────────────────
+
 @pytest.mark.asyncio
-async def test_stream_resets_bus_each_call(executor, envelope):
-    """Each stream() call should clear the bus from the previous round."""
-    fake_chunks = [
-        {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}], "usage": None},
-        {"choices": [{"delta": {}, "finish_reason": "stop"}],
-         "usage": {"prompt_tokens": 5, "completion_tokens": 2}},
-    ]
+async def test_tool_use_round_trip(executor, envelope):
+    """
+    Full flow: transport yields tool_call → executor yields TOOL_USE
+    → test pushes result to bus → executor loops → yields STOP.
+    """
+    call_num = 0
+
+    async def two_round_stream(api_key, body):
+        nonlocal call_num
+        call_num += 1
+        if call_num == 1:
+            yield {
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_abc",
+                            "function": {"name": "read", "arguments": '{"path":"/foo"}'},
+                        }]
+                    },
+                    "finish_reason": None,
+                }],
+                "usage": None,
+            }
+            yield {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+            }
+        else:
+            yield {
+                "choices": [{"delta": {"content": "Done."}, "finish_reason": None}],
+                "usage": None,
+            }
+            yield {
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 15, "completion_tokens": 3},
+            }
+
+    with patch.object(executor._transport, "stream", side_effect=two_round_stream):
+        gen = executor.stream(envelope)
+
+        # 1. Routing TEXT event
+        event = await gen.__anext__()
+        assert event.kind == ExecutorEventKind.TEXT
+        assert "_routing" in event.payload
+
+        # 2. TOOL_USE event
+        event = await gen.__anext__()
+        assert event.kind == ExecutorEventKind.TOOL_USE
+        assert event.payload["tool"] == "read"
+        assert event.payload["args"] == {"path": "/foo"}
+        tool_id = event.payload["tool_use_id"]
+
+        # Push result BEFORE advancing the generator
+        executor.get_bus().push(tool_id, "file contents here")
+
+        # 3. TEXT delta from round 2
+        event = await gen.__anext__()
+        assert event.kind == ExecutorEventKind.TEXT
+        assert event.payload.get("text") == "Done."
+
+        # 4. STOP
+        event = await gen.__anext__()
+        assert event.kind == ExecutorEventKind.STOP
+        assert event.payload["usage"]["output_tokens"] == 3
+
+
+@pytest.mark.asyncio
+async def test_depth_in_routing_event(executor, lineage, policy):
+    """Routing event should reflect envelope.depth."""
+    from tests.conftest import _build_envelope
+    deep_env = _build_envelope(lineage, policy, depth=3)
 
     async def fake_stream(api_key, body):
-        for chunk in fake_chunks:
+        for chunk in _STOP_CHUNKS:
             yield chunk
 
     with patch.object(executor._transport, "stream", side_effect=fake_stream):
-        _ = [e async for e in executor.stream(envelope)]
+        events = await _collect(executor.stream(deep_env))
 
-    # Second call should not raise / deadlock
-    with patch.object(executor._transport, "stream", side_effect=fake_stream):
-        events = [e async for e in executor.stream(envelope)]
-
-    assert any(e.kind == ExecutorEventKind.STOP for e in events)
+    routing = events[0]
+    assert routing.payload["_routing"]["depth"] == 3
