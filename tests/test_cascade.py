@@ -32,26 +32,52 @@ def test_depth_6_returns_llama(mapper):
 def test_depth_100_returns_llama_last_tier(mapper):
     assert mapper.resolve(100) == "meta-llama/llama-3.3-70b-instruct"
 
+
+# ── tier_shift ─────────────────────────────────────────────────────────────
+
 def test_tier_shift_plus1_upgrades_to_more_capable(mapper):
     # depth=1 → sonnet (tier_index=1); shift +1 → opus (tier_index=0)
-    model = mapper.resolve(1, tier_shift=1)
-    assert model == "anthropic/claude-opus-4-7"
+    assert mapper.resolve(1, tier_shift=1) == "anthropic/claude-opus-4-7"
 
 def test_tier_shift_minus1_downgrades_to_cheaper(mapper):
     # depth=1 → sonnet (tier_index=1); shift -1 → gpt-4o-mini (tier_index=2)
-    model = mapper.resolve(1, tier_shift=-1)
-    assert model == "openai/gpt-4o-mini"
+    assert mapper.resolve(1, tier_shift=-1) == "openai/gpt-4o-mini"
 
 def test_tier_shift_zero_no_change(mapper):
     assert mapper.resolve(0, tier_shift=0) == "anthropic/claude-opus-4-7"
 
 def test_tier_shift_clamped_at_most_capable(mapper):
-    # Already at tier_index=0 (opus); shift +10 stays at opus
     assert mapper.resolve(0, tier_shift=10) == "anthropic/claude-opus-4-7"
 
 def test_tier_shift_clamped_at_cheapest(mapper):
-    # Already at tier_index=3 (llama); shift -10 stays at llama
     assert mapper.resolve(6, tier_shift=-10) == "meta-llama/llama-3.3-70b-instruct"
+
+
+# ── routing_tier override ──────────────────────────────────────────────────
+
+def test_routing_tier_overrides_depth(mapper):
+    # leaf node at depth=6 (would normally get llama) forces tier_index=0 (opus)
+    assert mapper.resolve(6, routing_tier=0) == "anthropic/claude-opus-4-7"
+
+def test_routing_tier_none_falls_back_to_depth(mapper):
+    assert mapper.resolve(6, routing_tier=None) == "meta-llama/llama-3.3-70b-instruct"
+
+def test_routing_tier_with_shift_applied_on_top(mapper):
+    # routing_tier=1 (sonnet) + shift +1 (upgrade) → opus
+    assert mapper.resolve(6, tier_shift=1, routing_tier=1) == "anthropic/claude-opus-4-7"
+
+def test_routing_tier_with_downgrade_shift(mapper):
+    # routing_tier=0 (opus) + shift -1 (budget downgrade) → sonnet
+    assert mapper.resolve(0, tier_shift=-1, routing_tier=0) == "anthropic/claude-sonnet-4-6"
+
+def test_routing_tier_depth_unchanged(mapper):
+    # routing_tier overrides model selection but depth remains a separate fact
+    # (verified at envelope level; here just confirm resolve still accepts depth)
+    result = mapper.resolve(6, routing_tier=0)
+    assert result == "anthropic/claude-opus-4-7"  # depth=6 ignored in model selection
+
+
+# ── tier_label / TierSpec ──────────────────────────────────────────────────
 
 def test_tier_label_returns_string(mapper):
     assert mapper.tier_label(0) == "tier_0"

@@ -32,14 +32,10 @@ class OpenRouterExecutor(Invokable):
     """
     axor-core Invokable backed by the OpenRouter API.
 
-    Implements the ToolResultBus pattern:
-      - wrapper.py detects get_bus() and registers a push callback
-      - intent_loop executes tools and pushes results to the bus
-      - this executor yields TOOL_USE events, awaits bus.wait(), loops
-
-    Model selection:
-      Uses TierMapper to pick a model based on envelope.depth.
-      AdaptiveRouter can override mid-session when budget pressure is detected.
+    Model selection priority:
+      1. envelope.routing_tier  — explicit tier override (e.g. force opus for a critical leaf)
+      2. envelope.depth         — structural depth → tier lookup via TierMapper
+      3. AdaptiveRouter shift   — budget-driven up/downgrade applied on top
     """
 
     def __init__(
@@ -76,17 +72,14 @@ class OpenRouterExecutor(Invokable):
 
         Yields TEXT events during streaming, TOOL_USE when tools are needed,
         and a final STOP event with usage statistics.
-
-        The conversation loop continues until finish_reason == "stop".
         """
         depth = envelope.depth or (
             envelope.lineage.depth if envelope.lineage else 0
         )
-        model = self._resolve_model(depth)
+        model = self._resolve_model(depth, envelope)
         messages = build_messages(envelope)
         tools = build_tools_with_extensions(envelope)
 
-        # record routing decision in trace
         yield ExecutorEvent(
             kind=ExecutorEventKind.TEXT,
             payload={"_routing": {"model": model, "depth": depth}},
@@ -106,7 +99,6 @@ class OpenRouterExecutor(Invokable):
             try:
                 async for chunk in self._transport.stream(self._api_key, request_body):
                     accumulator.feed(chunk)
-                    # stream text deltas in real time
                     choices = chunk.get("choices", [])
                     if choices:
                         delta_text = choices[0].get("delta", {}).get("content", "")
@@ -128,14 +120,12 @@ class OpenRouterExecutor(Invokable):
             finish = accumulator.finish_reason
 
             if finish == "tool_calls" or (not finish and accumulator.has_tool_calls()):
-                # Append the assistant’s tool_calls turn to history
                 messages = build_tool_request_messages(
                     messages,
                     assistant_content=accumulator.text or None,
                     tool_calls=accumulator.tool_calls,
                 )
 
-                # Emit TOOL_USE for each tool call; wait for results via bus
                 for tc in accumulator.tool_calls:
                     tool_name = tc["function"]["name"]
                     try:
@@ -152,21 +142,18 @@ class OpenRouterExecutor(Invokable):
                         },
                         node_id=envelope.node_id,
                     )
-                    # Bus.wait() returns immediately — intent_loop already pushed result
                     _, result = await self._bus.wait()
                     append_tool_result(messages, tc["id"], result)
 
-                    # Notify cache health monitor if active
                     if self._cache_monitor is not None:
                         self._cache_monitor.record_tool_call()
 
-                continue  # next LLM call with tool results in history
+                continue
 
-            else:  # finish_reason == "stop" or empty (final response)
+            else:
                 usage = accumulator.usage
                 token_usage = decode_usage(usage, context_tokens=envelope.context.token_count)
 
-                # Notify cache health monitor
                 if self._cache_monitor is not None:
                     self._cache_monitor.record_usage(
                         cache_read=token_usage.cache_read_input_tokens,
@@ -189,14 +176,21 @@ class OpenRouterExecutor(Invokable):
                 )
                 break
 
-    # ── Private ───────────────────────────────────────────────────────────────────
+    # ── Private ──────────────────────────────────────────────────────────────────────────
 
-    def _resolve_model(self, depth: int) -> str:
-        """Pick model for this depth, applying adaptive tier shift if active."""
+    def _resolve_model(self, depth: int, envelope: "ExecutionEnvelope") -> str:
+        """Pick model using routing_tier override, depth lookup, then budget shift."""
         shift = 0
         if self._adaptive_router is not None:
             shift = self._adaptive_router.current_shift()
-        return self._tier_mapper.resolve(depth, tier_shift=shift) or self._default_model
+        return (
+            self._tier_mapper.resolve(
+                depth,
+                tier_shift=shift,
+                routing_tier=getattr(envelope, "routing_tier", None),
+            )
+            or self._default_model
+        )
 
     def _build_request_body(
         self,
@@ -213,11 +207,9 @@ class OpenRouterExecutor(Invokable):
             body["tools"] = tools
             body["tool_choice"] = "auto"
 
-        # Response caching for deterministic nodes
         if envelope.deterministic:
             body["temperature"] = 0
 
-        # Provider preferences from routing layer
         if self._provider_prefs is not None:
             provider_dict = self._provider_prefs.to_dict()
             if provider_dict:
