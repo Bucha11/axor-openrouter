@@ -1,1 +1,15 @@
-__pycache__
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+*.log
+
+# benchmark-generated artifacts (child agent output files)
+auth.py
+config.py
+database.py
+main.py
+models.py
+routes_*.py
+tests_unit.py
