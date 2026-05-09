@@ -42,12 +42,10 @@ _TOOL_RESULT_MAX_CHARS: dict[CompressionMode, int] = {
 # 6 = assistant(tool_calls) + tool_result × 2 round-trips.
 _KEEP_TAIL = 6
 
-# max_tokens cap for GENERATIVE child tasks — cuts verbose prose from cheap models.
-# EXPANSIVE children are uncapped (they may need to produce large artifacts).
-_GENERATIVE_MAX_TOKENS: dict[TaskComplexity, int] = {
-    TaskComplexity.FOCUSED:   4000,
-    TaskComplexity.MODERATE:  6000,
-}
+# Multiplier applied to export_contract.max_export_tokens → max_tokens in API call.
+# Generate up to 1.5× the export limit so the model finishes naturally before
+# the export truncation kicks in (avoids mid-word cuts in exported output).
+_EXPORT_TO_API_TOKENS_FACTOR = 1.5
 
 _BREVITY_SUFFIX = (
     "\n\nIMPORTANT: Output ONLY the requested artifact. "
@@ -316,13 +314,16 @@ class OpenRouterExecutor(Invokable):
         depth = envelope.depth or (envelope.lineage.depth if envelope.lineage else 0)
         task_signal = getattr(envelope, "task_signal", None)
 
-        # For GENERATIVE child nodes: cap output tokens and reinforce brevity.
+        # For GENERATIVE child nodes: reinforce brevity via system instruction.
         # Cheap models (qwen, llama) tend to add prose regardless of task instructions.
         if depth > 0 and task_signal is not None and task_signal.nature == TaskNature.GENERATIVE:
             messages = self._inject_brevity(messages)
-            cap = _GENERATIVE_MAX_TOKENS.get(task_signal.complexity)
-        else:
-            cap = None
+
+        # Derive max_tokens from axor-core's ExportContract rather than hardcoding.
+        # If the policy caps exports at N tokens, no point generating more than
+        # N × factor — the ExportFilter will truncate the rest anyway.
+        export_limit = envelope.export_contract.max_export_tokens
+        cap = int(export_limit * _EXPORT_TO_API_TOKENS_FACTOR) if export_limit else None
 
         body: dict = {"model": model, "messages": messages}
         if cap is not None:
