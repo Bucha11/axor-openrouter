@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -7,6 +8,8 @@ from typing import AsyncIterator
 import httpx
 
 log = logging.getLogger("axor.openrouter.transport")
+
+_RETRYABLE = {429, 500, 502, 503, 504}
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 _USER_AGENT = "axor-openrouter/0.1.0"
@@ -51,27 +54,44 @@ class OpenRouterTransport:
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
 
-        client = await self._get_client()
-        try:
-            async with client.stream("POST", BASE_URL, json=payload, headers=headers) as resp:
-                if resp.status_code >= 400:
-                    body_text = await resp.aread()
-                    raise TransportError(resp.status_code, body_text.decode())
-
-                async for line in resp.aiter_lines():
-                    if not line or line.startswith(":") or not line.startswith("data: "):
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            if attempt:
+                wait = 2 ** attempt  # 2, 4, 8 s
+                log.warning("retrying after %ss (attempt %d)", wait, attempt + 1)
+                await asyncio.sleep(wait)
+            try:
+                client = await self._get_client()
+                async with client.stream("POST", BASE_URL, json=payload, headers=headers) as resp:
+                    if resp.status_code in _RETRYABLE:
+                        body_text = await resp.aread()
+                        last_exc = TransportError(resp.status_code, body_text.decode())
+                        log.warning("retryable %d: %s", resp.status_code, body_text[:120])
+                        self._client = None  # force new connection on retry
                         continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        yield json.loads(data)
-                    except json.JSONDecodeError:
-                        log.debug("unparseable SSE chunk: %r", data[:100])
-        except httpx.TimeoutException as exc:
-            raise TransportError(0, f"timeout: {exc}") from exc
-        except httpx.RequestError as exc:
-            raise TransportError(0, f"request error: {exc}") from exc
+                    if resp.status_code >= 400:
+                        body_text = await resp.aread()
+                        raise TransportError(resp.status_code, body_text.decode())
+
+                    async for line in resp.aiter_lines():
+                        if not line or line.startswith(":") or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            return
+                        try:
+                            yield json.loads(data)
+                        except json.JSONDecodeError:
+                            log.debug("unparseable SSE chunk: %r", data[:100])
+                    return  # clean exit — no retry needed
+            except httpx.TimeoutException as exc:
+                last_exc = TransportError(0, f"timeout: {exc}")
+                self._client = None
+            except httpx.RequestError as exc:
+                last_exc = TransportError(0, f"request error: {exc}")
+                self._client = None
+
+        raise last_exc or TransportError(0, "all retries exhausted")
 
     async def aclose(self) -> None:
         if self._client and not self._client.is_closed:
