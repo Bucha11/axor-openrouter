@@ -8,13 +8,20 @@ from typing import Any
 from axor_core.capability.executor import CapabilityExecutor, ToolHandler
 
 
+def _get_path(args: dict[str, Any]) -> str:
+    """Accept path under 'path', 'file_path', or 'filename' keys."""
+    return args.get("path") or args.get("file_path") or args.get("filename") or args.get("filepath") or ""
+
+
 class ReadHandler(ToolHandler):
     @property
     def name(self) -> str:
         return "read"
 
     async def execute(self, args: dict[str, Any]) -> Any:
-        path = args["path"]
+        path = _get_path(args)
+        if not path:
+            return "Error: no path argument provided"
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 return f.read()
@@ -30,8 +37,10 @@ class WriteHandler(ToolHandler):
         return "write"
 
     async def execute(self, args: dict[str, Any]) -> Any:
-        path = args["path"]
-        content = args["content"]
+        path = _get_path(args)
+        content = args.get("content") or args.get("text") or args.get("data") or ""
+        if not path:
+            return "Error: no path argument provided"
         parent = os.path.dirname(os.path.abspath(path))
         if parent:
             os.makedirs(parent, exist_ok=True)
