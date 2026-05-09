@@ -37,14 +37,14 @@ MODEL_REGISTRY: list[ModelEntry] = [
 
     # ── Tier 2: Fast ──────────────────────────────────────────────────────────
     ModelEntry("anthropic/claude-haiku-4-5",                 2,  0.80,  4.00, 200),
-    ModelEntry("meta-llama/llama-3.3-70b-instruct",          2,  0.12,  0.30, 128),
-    ModelEntry("mistralai/mistral-small-3.2-24b-instruct",   2,  0.10,  0.30,  32),
     ModelEntry("deepseek/deepseek-chat",                     2,  0.27,  1.10, 128),
 
     # ── Tier 3: Cheap ─────────────────────────────────────────────────────────
     ModelEntry("openai/gpt-4o-mini",                         3,  0.15,  0.60, 128),
 
     # ── Tier 4: Free / near-free ──────────────────────────────────────────────
+    ModelEntry("meta-llama/llama-3.3-70b-instruct",          4,  0.12,  0.30, 128),
+    ModelEntry("mistralai/mistral-small-3.2-24b-instruct",   4,  0.10,  0.30,  32),
     ModelEntry("qwen/qwen3-8b",                              4,  0.06,  0.12,  32),
     ModelEntry("meta-llama/llama-3.3-70b-instruct:free",     4,  0.00,  0.00, 128),
     ModelEntry("google/gemma-3-27b-it:free",                 4,  0.00,  0.00,  96),
