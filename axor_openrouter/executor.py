@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from axor_core.contracts.envelope import ExecutionEnvelope
     from axor_openrouter.cascade.tiers import TierMapper
     from axor_openrouter.routing.provider_prefs import ProviderPrefs
+    from axor_openrouter.routing.model_selector import SmartModelSelector
 
 from axor_openrouter.bus import ToolResultBus
 from axor_openrouter.transport import OpenRouterTransport, StreamAccumulator, TransportError
@@ -29,6 +30,11 @@ class OpenRouterExecutor(Invokable):
     """
     axor-core Invokable backed by the OpenRouter API.
 
+    Model selection priority (highest wins):
+      1. tier_mapper   — explicit depth→model map (manual override)
+      2. model_selector — SmartModelSelector (task complexity + depth)
+      3. default_model  — single model for all nodes
+
     Uses ToolResultBus: wrapper.py detects get_bus() and registers a push
     callback so intent_loop can feed tool results back to this executor.
     """
@@ -38,16 +44,18 @@ class OpenRouterExecutor(Invokable):
         api_key: str,
         model: str,
         transport: OpenRouterTransport,
-        tier_mapper: "TierMapper",
+        tier_mapper: "TierMapper | None" = None,
+        model_selector: "SmartModelSelector | None" = None,
         provider_prefs: "ProviderPrefs | None" = None,
     ) -> None:
         self._api_key        = api_key
         self._default_model  = model
         self._transport      = transport
         self._tier_mapper    = tier_mapper
+        self._model_selector = model_selector
         self._provider_prefs = provider_prefs
         self._bus            = ToolResultBus()
-        self._ledger: list[dict] = []  # [{model, depth, in_tokens, out_tokens}]
+        self._ledger: list[dict] = []
 
     def get_bus(self) -> ToolResultBus:
         """Called by wrapper.py to register the tool result injection callback."""
@@ -60,9 +68,16 @@ class OpenRouterExecutor(Invokable):
     def reset_ledger(self) -> None:
         self._ledger.clear()
 
+    def _resolve_model(self, task: str, depth: int) -> str:
+        if self._tier_mapper is not None:
+            return self._tier_mapper.resolve(depth)
+        if self._model_selector is not None:
+            return self._model_selector.select(task, depth)
+        return self._default_model
+
     async def stream(self, envelope: "ExecutionEnvelope") -> AsyncIterator[ExecutorEvent]:
         depth = envelope.depth or (envelope.lineage.depth if envelope.lineage else 0)
-        model = self._tier_mapper.resolve(depth) if self._tier_mapper else self._default_model
+        model = self._resolve_model(envelope.task, depth)
         messages = build_messages(envelope)
         tools = build_tools_with_extensions(envelope)
 
@@ -97,13 +112,12 @@ class OpenRouterExecutor(Invokable):
                 )
                 return
 
-            # Record this API call in the ledger for external cost attribution
             if accumulator.usage:
                 u = accumulator.usage
                 self._ledger.append({
-                    "model":     model,
-                    "depth":     depth,
-                    "in_tokens": u.get("prompt_tokens", 0),
+                    "model":      model,
+                    "depth":      depth,
+                    "in_tokens":  u.get("prompt_tokens", 0),
                     "out_tokens": u.get("completion_tokens", 0),
                 })
 
