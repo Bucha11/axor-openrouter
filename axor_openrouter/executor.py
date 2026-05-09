@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
-from axor_core.contracts.policy import CompressionMode
+from axor_core.contracts.policy import CompressionMode, TaskNature, TaskComplexity
 
 if TYPE_CHECKING:
     from axor_core.contracts.envelope import ExecutionEnvelope
@@ -41,6 +41,18 @@ _TOOL_RESULT_MAX_CHARS: dict[CompressionMode, int] = {
 # How many recent messages (from the tail) to preserve untouched.
 # 6 = assistant(tool_calls) + tool_result × 2 round-trips.
 _KEEP_TAIL = 6
+
+# max_tokens cap for GENERATIVE child tasks — cuts verbose prose from cheap models.
+# EXPANSIVE children are uncapped (they may need to produce large artifacts).
+_GENERATIVE_MAX_TOKENS: dict[TaskComplexity, int] = {
+    TaskComplexity.FOCUSED:   1500,
+    TaskComplexity.MODERATE:  3000,
+}
+
+_BREVITY_SUFFIX = (
+    "\n\nIMPORTANT: Output ONLY the requested artifact. "
+    "No preamble, no explanation, no commentary after the code."
+)
 
 
 class OpenRouterExecutor(Invokable):
@@ -301,7 +313,20 @@ class OpenRouterExecutor(Invokable):
         tools: list[dict],
         envelope: "ExecutionEnvelope",
     ) -> dict:
+        depth = envelope.depth or (envelope.lineage.depth if envelope.lineage else 0)
+        task_signal = getattr(envelope, "task_signal", None)
+
+        # For GENERATIVE child nodes: cap output tokens and reinforce brevity.
+        # Cheap models (qwen, llama) tend to add prose regardless of task instructions.
+        if depth > 0 and task_signal is not None and task_signal.nature == TaskNature.GENERATIVE:
+            messages = self._inject_brevity(messages)
+            cap = _GENERATIVE_MAX_TOKENS.get(task_signal.complexity)
+        else:
+            cap = None
+
         body: dict = {"model": model, "messages": messages}
+        if cap is not None:
+            body["max_tokens"] = cap
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -312,3 +337,12 @@ class OpenRouterExecutor(Invokable):
             if provider_dict:
                 body["provider"] = provider_dict
         return body
+
+    def _inject_brevity(self, messages: list[dict]) -> list[dict]:
+        """Append brevity instruction to system message (or add one) for GENERATIVE tasks."""
+        msgs = list(messages)
+        if msgs and msgs[0].get("role") == "system":
+            msgs[0] = {**msgs[0], "content": msgs[0]["content"] + _BREVITY_SUFFIX}
+        else:
+            msgs.insert(0, {"role": "system", "content": _BREVITY_SUFFIX.strip()})
+        return msgs
