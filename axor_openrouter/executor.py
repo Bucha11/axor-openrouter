@@ -41,16 +41,24 @@ class OpenRouterExecutor(Invokable):
         tier_mapper: "TierMapper",
         provider_prefs: "ProviderPrefs | None" = None,
     ) -> None:
-        self._api_key       = api_key
-        self._default_model = model
-        self._transport     = transport
-        self._tier_mapper   = tier_mapper
+        self._api_key        = api_key
+        self._default_model  = model
+        self._transport      = transport
+        self._tier_mapper    = tier_mapper
         self._provider_prefs = provider_prefs
-        self._bus           = ToolResultBus()
+        self._bus            = ToolResultBus()
+        self._ledger: list[dict] = []  # [{model, depth, in_tokens, out_tokens}]
 
     def get_bus(self) -> ToolResultBus:
         """Called by wrapper.py to register the tool result injection callback."""
         return self._bus
+
+    def call_ledger(self) -> list[dict]:
+        """Return per-API-call cost records for cost attribution."""
+        return list(self._ledger)
+
+    def reset_ledger(self) -> None:
+        self._ledger.clear()
 
     async def stream(self, envelope: "ExecutionEnvelope") -> AsyncIterator[ExecutorEvent]:
         depth = envelope.depth or (envelope.lineage.depth if envelope.lineage else 0)
@@ -88,6 +96,16 @@ class OpenRouterExecutor(Invokable):
                     node_id=envelope.node_id,
                 )
                 return
+
+            # Record this API call in the ledger for external cost attribution
+            if accumulator.usage:
+                u = accumulator.usage
+                self._ledger.append({
+                    "model":     model,
+                    "depth":     depth,
+                    "in_tokens": u.get("prompt_tokens", 0),
+                    "out_tokens": u.get("completion_tokens", 0),
+                })
 
             finish = accumulator.finish_reason
 
