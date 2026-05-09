@@ -45,8 +45,8 @@ _KEEP_TAIL = 6
 # max_tokens cap for GENERATIVE child tasks — cuts verbose prose from cheap models.
 # EXPANSIVE children are uncapped (they may need to produce large artifacts).
 _GENERATIVE_MAX_TOKENS: dict[TaskComplexity, int] = {
-    TaskComplexity.FOCUSED:   1500,
-    TaskComplexity.MODERATE:  3000,
+    TaskComplexity.FOCUSED:   4000,
+    TaskComplexity.MODERATE:  6000,
 }
 
 _BREVITY_SUFFIX = (
