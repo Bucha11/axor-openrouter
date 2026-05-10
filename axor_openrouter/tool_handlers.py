@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import glob as glob_module
 import os
+from pathlib import Path
 from typing import Any
 
 from axor_core.capability.executor import CapabilityExecutor, ToolHandler
@@ -11,6 +13,33 @@ from axor_core.capability.executor import CapabilityExecutor, ToolHandler
 def _get_path(args: dict[str, Any]) -> str:
     """Accept path under 'path', 'file_path', or 'filename' keys."""
     return args.get("path") or args.get("file_path") or args.get("filename") or args.get("filepath") or ""
+
+
+def _load_claudeignore(cwd: str = ".") -> list[str]:
+    """Return non-comment patterns from .claudeignore in cwd."""
+    try:
+        text = Path(os.path.join(cwd, ".claudeignore")).read_text(encoding="utf-8", errors="replace")
+        return [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#")]
+    except OSError:
+        return []
+
+
+def _is_ignored(fpath: str, patterns: list[str]) -> bool:
+    """Return True if fpath matches any .claudeignore pattern."""
+    if not patterns:
+        return False
+    name = os.path.basename(fpath)
+    norm = fpath.replace("\\", "/").lstrip("./")
+    for raw_p in patterns:
+        p = raw_p.lstrip("/").rstrip("/")
+        if not p:
+            continue
+        if fnmatch.fnmatch(name, p) or fnmatch.fnmatch(norm, p):
+            return True
+        # also match any path component (e.g. "node_modules" anywhere in the path)
+        if "/" not in p and any(fnmatch.fnmatch(part, p) for part in norm.split("/")):
+            return True
+    return False
 
 
 class ReadHandler(ToolHandler):
@@ -115,6 +144,9 @@ class SearchHandler(ToolHandler):
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
         lines = stdout.decode(errors="replace").splitlines()
+        ignore = _load_claudeignore(path if os.path.isdir(path) else ".")
+        if ignore:
+            lines = [l for l in lines if not _is_ignored(l, ignore)]
         return "\n".join(lines[:100])
 
     async def _search_content(
@@ -136,6 +168,9 @@ class SearchHandler(ToolHandler):
             cmd += ["-C", str(context)]
         if include:
             cmd += ["--glob", include]
+        cwd_for_ignore = path if os.path.isdir(path) else os.path.dirname(path) or "."
+        for pat in _load_claudeignore(cwd_for_ignore):
+            cmd += ["--glob", f"!{pat}"]
         cmd += ["--", pattern, path]
 
         proc = await asyncio.create_subprocess_exec(
@@ -222,6 +257,9 @@ class GlobHandler(ToolHandler):
         cwd = args.get("cwd", ".")
         full_pattern = os.path.join(cwd, pattern)
         matches = glob_module.glob(full_pattern, recursive=True)
+        ignore = _load_claudeignore(cwd)
+        if ignore:
+            matches = [m for m in matches if not _is_ignored(m, ignore)]
         return "\n".join(matches) if matches else "No matches found."
 
 
