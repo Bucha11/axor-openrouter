@@ -74,13 +74,22 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "search",
-            "description": "Search for files by name pattern or grep for content.",
+            "description": (
+                "Search for files by name or grep for content inside files. "
+                "Uses ripgrep (rg) when available — fast, symlink-aware, respects .gitignore. "
+                "Falls back to grep -R (also follows symlinks). "
+                "File search uses find -L (follows symlinks)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Search pattern."},
-                    "path":    {"type": "string", "description": "Directory to search.", "default": "."},
-                    "type":    {"type": "string", "enum": ["file", "content", "both"], "default": "both"},
+                    "pattern":     {"type": "string", "description": "Search pattern (regex for content, glob for file names)."},
+                    "path":        {"type": "string", "description": "Directory to search.", "default": "."},
+                    "type":        {"type": "string", "enum": ["file", "content", "both"], "default": "both",
+                                    "description": "What to search: file names, file contents, or both."},
+                    "include":     {"type": "string", "description": "Limit content search to files matching this glob, e.g. '*.py' or '*.{ts,tsx}'."},
+                    "context":     {"type": "integer", "description": "Lines of context around each content match (0–10).", "default": 0},
+                    "ignore_case": {"type": "boolean", "description": "Case-insensitive search.", "default": False},
                 },
                 "required": ["pattern"],
             },

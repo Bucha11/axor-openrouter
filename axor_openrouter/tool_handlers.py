@@ -71,37 +71,104 @@ class BashHandler(ToolHandler):
 
 
 class SearchHandler(ToolHandler):
+    """
+    Content and file search.
+
+    Content search backend priority:
+      1. ripgrep (rg) — fast, follows symlinks, respects .gitignore
+      2. grep -R      — follows symlinks, universal fallback
+
+    File search uses find -L (follows symlinks).
+    """
+
     @property
     def name(self) -> str:
         return "search"
 
     async def execute(self, args: dict[str, Any]) -> Any:
-        pattern = args["pattern"]
-        path = args.get("path", ".")
+        pattern     = args["pattern"]
+        path        = args.get("path", ".")
         search_type = args.get("type", "both")
-        results = []
+        include     = args.get("include", "")        # e.g. "*.py"
+        context     = min(int(args.get("context", 0)), 10)
+        ignore_case = bool(args.get("ignore_case", False))
+
+        results: list[str] = []
 
         if search_type in ("file", "both"):
-            proc = await asyncio.create_subprocess_shell(
-                f"find {path} -name '{pattern}' 2>/dev/null | head -50",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            if stdout.strip():
-                results.append("Files:\n" + stdout.decode(errors="replace"))
+            out = await self._find_files(pattern, path)
+            if out:
+                results.append("Files:\n" + out)
 
         if search_type in ("content", "both"):
-            proc = await asyncio.create_subprocess_shell(
-                f"grep -r --include='*' '{pattern}' {path} 2>/dev/null | head -50",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            if stdout.strip():
-                results.append("Content matches:\n" + stdout.decode(errors="replace"))
+            out = await self._search_content(pattern, path, include, context, ignore_case)
+            if out:
+                results.append("Content matches:\n" + out)
 
         return "\n".join(results) if results else "No results found."
+
+    async def _find_files(self, pattern: str, path: str) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            "find", "-L", path, "-name", pattern,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        lines = stdout.decode(errors="replace").splitlines()
+        return "\n".join(lines[:100])
+
+    async def _search_content(
+        self, pattern: str, path: str, include: str, context: int, ignore_case: bool
+    ) -> str:
+        try:
+            return await self._rg(pattern, path, include, context, ignore_case)
+        except FileNotFoundError:
+            # rg not installed — fall back to grep
+            return await self._grep(pattern, path, include, context, ignore_case)
+
+    async def _rg(
+        self, pattern: str, path: str, include: str, context: int, ignore_case: bool
+    ) -> str:
+        cmd = ["rg", "--follow", "--line-number", "--no-heading", "--color=never"]
+        if ignore_case:
+            cmd.append("--ignore-case")
+        if context > 0:
+            cmd += ["-C", str(context)]
+        if include:
+            cmd += ["--glob", include]
+        cmd += ["--", pattern, path]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        # rg exits 1 on no matches — that's not an error
+        lines = stdout.decode(errors="replace").splitlines()
+        return "\n".join(lines[:200])
+
+    async def _grep(
+        self, pattern: str, path: str, include: str, context: int, ignore_case: bool
+    ) -> str:
+        # -R follows symlinks (unlike -r)
+        cmd = ["grep", "-R", "--line-number", "--color=never"]
+        if ignore_case:
+            cmd.append("--ignore-case")
+        if context > 0:
+            cmd += ["-C", str(context)]
+        if include:
+            cmd += [f"--include={include}"]
+        cmd += ["--", pattern, path]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        lines = stdout.decode(errors="replace").splitlines()
+        return "\n".join(lines[:200])
 
 
 class EditHandler(ToolHandler):
