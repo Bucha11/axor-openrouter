@@ -74,6 +74,8 @@ def make_session(
     sort: str = "quality",
     thinking_budget: int | None = None,
     mcp_servers: list | None = None,
+    memory_provider: Any = None,
+    memory_namespace: str = "default",
     _extra_loaders: list | None = None,
     **kwargs: Any,
 ) -> GovernedSession:
@@ -137,10 +139,14 @@ def make_session(
     if _extra_loaders:
         extension_loaders.extend(_extra_loaders)
 
-    return GovernedSession(
+    session = GovernedSession(
         executor=executor,
         capability_executor=cap_executor,
         extension_loaders=extension_loaders,
         soft_token_limit=soft_token_limit,
+        memory_provider=memory_provider,
         telemetry=telemetry,
     )
+    if memory_namespace != "default":
+        session._default_memory_namespace = memory_namespace  # type: ignore[attr-defined]
+    return session
