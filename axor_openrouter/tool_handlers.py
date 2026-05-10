@@ -104,6 +104,47 @@ class SearchHandler(ToolHandler):
         return "\n".join(results) if results else "No results found."
 
 
+class EditHandler(ToolHandler):
+    @property
+    def name(self) -> str:
+        return "edit"
+
+    async def execute(self, args: dict[str, Any]) -> Any:
+        path = _get_path(args)
+        old_string = args.get("old_string", "")
+        new_string = args.get("new_string", "")
+        replace_all = bool(args.get("replace_all", False))
+
+        if not path:
+            return "Error: no path argument provided"
+        if not old_string:
+            return "Error: old_string is required"
+
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return f"Error: file not found: {path}"
+        except PermissionError:
+            return f"Error: permission denied: {path}"
+
+        count = content.count(old_string)
+        if count == 0:
+            return "Error: old_string not found in file"
+        if count > 1 and not replace_all:
+            return (
+                f"Error: old_string found {count} times — use replace_all=true "
+                "or provide more surrounding context to make it unique"
+            )
+
+        new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        replaced = count if replace_all else 1
+        return f"Replaced {replaced} occurrence(s) in {path}"
+
+
 class GlobHandler(ToolHandler):
     @property
     def name(self) -> str:
@@ -120,6 +161,7 @@ class GlobHandler(ToolHandler):
 _HANDLER_MAP: dict[str, type[ToolHandler]] = {
     "read":   ReadHandler,
     "write":  WriteHandler,
+    "edit":   EditHandler,
     "bash":   BashHandler,
     "search": SearchHandler,
     "glob":   GlobHandler,

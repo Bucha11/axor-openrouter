@@ -32,6 +32,29 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
     },
+    "edit": {
+        "type": "function",
+        "function": {
+            "name": "edit",
+            "description": (
+                "Replace an exact string in an existing file. "
+                "Prefer this over write when modifying existing files — "
+                "only the changed portion needs to be generated. "
+                "old_string must match exactly (including whitespace/indentation). "
+                "If old_string appears multiple times, set replace_all=true or add more context to make it unique."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path":        {"type": "string", "description": "File path to edit."},
+                    "old_string":  {"type": "string", "description": "Exact string to find and replace."},
+                    "new_string":  {"type": "string", "description": "Replacement string."},
+                    "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: false).", "default": False},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
     "bash": {
         "type": "function",
         "function": {
