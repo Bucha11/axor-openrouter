@@ -89,6 +89,7 @@ class OpenRouterExecutor(Invokable):
         self._model_selector = model_selector
         self._provider_prefs = provider_prefs
         self._thinking_budget = thinking_budget
+        self._extension_schemas: list[dict] = []
         self._bus            = ToolResultBus()
         self._ledger: list[dict] = []
         self._dead_models: set[str] = set()  # 404'd models, skipped on next selection
@@ -96,6 +97,10 @@ class OpenRouterExecutor(Invokable):
         self._tool_start_callback: Callable[[str, dict], None] | None = None
         self._tool_end_callback: Callable[[str, dict, Any], None] | None = None
         self._approval_callback: Callable[[str, dict], Awaitable[bool]] | None = None
+
+    def register_extension_schema(self, schema: dict) -> None:
+        """Register an OpenAI-format tool schema from an extension (e.g. MCP server)."""
+        self._extension_schemas.append(schema)
 
     def set_text_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback invoked with each streaming text chunk (used by axor-cli)."""
@@ -231,7 +236,10 @@ class OpenRouterExecutor(Invokable):
         compression_mode = envelope.policy.compression_mode
 
         messages = build_messages(envelope)
-        tools = build_tools_with_extensions(envelope)
+        tools = build_tools_with_extensions(
+            envelope,
+            self._extension_schemas if self._extension_schemas else None,
+        )
 
         loop_count = 0
         while True:

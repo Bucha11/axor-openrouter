@@ -73,6 +73,7 @@ def make_session(
     telemetry: Any = None,
     sort: str = "quality",
     thinking_budget: int | None = None,
+    mcp_servers: list | None = None,
     _extra_loaders: list | None = None,
     **kwargs: Any,
 ) -> GovernedSession:
@@ -120,6 +121,19 @@ def make_session(
     extension_loaders = []
     if load_skills:
         extension_loaders.append(GenericSkillLoader())
+    if mcp_servers:
+        from axor_openrouter.mcp.loader import MCPLoader
+        from axor_openrouter.mcp.client import MCPClient
+        clients = [
+            MCPClient(
+                name=s["name"],
+                command=s["command"],
+                args=s.get("args", []),
+                env=s.get("env", {}),
+            )
+            for s in mcp_servers
+        ]
+        extension_loaders.append(MCPLoader(clients, cap_executor, executor))
     if _extra_loaders:
         extension_loaders.extend(_extra_loaders)
 
