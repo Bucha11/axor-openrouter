@@ -51,6 +51,9 @@ class ReadHandler(ToolHandler):
         path = _get_path(args)
         if not path:
             return "Error: no path argument provided"
+        ignore = _load_claudeignore()
+        if _is_ignored(path, ignore):
+            return f"Error: {path} is excluded by .claudeignore"
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 return f.read()

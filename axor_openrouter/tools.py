@@ -110,6 +110,26 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
     },
+    "fetch": {
+        "type": "function",
+        "function": {
+            "name": "fetch",
+            "description": (
+                "Fetch the content of an HTTP/HTTPS URL. "
+                "Returns the response body (capped at max_bytes). "
+                "Useful for reading documentation, APIs, or any web resource."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url":       {"type": "string", "description": "HTTP/HTTPS URL to fetch."},
+                    "max_bytes": {"type": "integer", "description": "Max bytes to return (default: 65536).", "default": 65536},
+                    "timeout":   {"type": "integer", "description": "Request timeout in seconds (default: 15).", "default": 15},
+                },
+                "required": ["url"],
+            },
+        },
+    },
     "spawn_child": {
         "type": "function",
         "function": {
