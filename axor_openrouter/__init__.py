@@ -37,7 +37,7 @@ from axor_openrouter.transport import OpenRouterTransport
 from axor_openrouter.cascade.tiers import TierSpec, TierMapper
 from axor_openrouter.routing.provider_prefs import ProviderPrefs
 from axor_openrouter.routing.model_selector import SmartModelSelector
-from axor_openrouter.tool_handlers import make_capability_executor
+from axor_openrouter.tool_handlers import make_capability_executor, TodoStore, TodoWriteHandler, TodoReadHandler
 from axor_openrouter.skills import GenericSkillLoader
 
 __all__ = [
@@ -90,6 +90,11 @@ def make_session(
     effective_model = model or _DEFAULT_MODEL
 
     cap_executor = make_capability_executor(tools)
+
+    # todo tools share a store — register them regardless of the tools tuple
+    todo_store = TodoStore()
+    cap_executor.register(TodoWriteHandler(todo_store))
+    cap_executor.register(TodoReadHandler(todo_store))
     provider_prefs = ProviderPrefs(
         sort=sort,
         max_prompt_price=max_prompt_price,
@@ -120,7 +125,20 @@ def make_session(
         thinking_budget=thinking_budget,
     )
 
-    extension_loaders = []
+    # loader that grants todo_write/todo_read in every policy
+    from axor_core.contracts.extension import ExtensionBundle, ExtensionFragment, ExtensionLoader
+
+    class _TodoPolicyLoader(ExtensionLoader):
+        async def load(self) -> ExtensionBundle:
+            frag = ExtensionFragment(
+                kind="context_fragment",
+                content="",
+                source="todo_tools",
+                policy_overrides={"extra_allowed_tools": ["todo_write", "todo_read"]},
+            )
+            return ExtensionBundle(fragments=(frag,))
+
+    extension_loaders = [_TodoPolicyLoader()]
     if load_skills:
         extension_loaders.append(GenericSkillLoader())
     if mcp_servers:
@@ -149,4 +167,5 @@ def make_session(
     )
     if memory_namespace != "default":
         session._default_memory_namespace = memory_namespace  # type: ignore[attr-defined]
+    session._todo_store = todo_store  # type: ignore[attr-defined]
     return session

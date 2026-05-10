@@ -277,6 +277,84 @@ class WebFetchHandler(ToolHandler):
             return f"Timeout fetching {url} after {timeout}s"
 
 
+class TodoStore:
+    """Session-scoped todo list shared between TodoWriteHandler and TodoReadHandler."""
+
+    _STATUS_ICON = {"pending": "○", "in_progress": "◉", "completed": "✓"}
+    _PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+    def __init__(self) -> None:
+        self._todos: list[dict] = []
+
+    def write(self, todos: list[dict]) -> None:
+        self._todos = [
+            {
+                "id":       str(t.get("id", i + 1)),
+                "content":  str(t.get("content", "")),
+                "status":   t.get("status", "pending"),
+                "priority": t.get("priority", "medium"),
+            }
+            for i, t in enumerate(todos)
+        ]
+
+    def read(self) -> list[dict]:
+        return list(self._todos)
+
+    def format(self) -> str:
+        if not self._todos:
+            return "No todos."
+        order = self._PRIORITY_ORDER
+        sorted_todos = sorted(
+            self._todos,
+            key=lambda t: (order.get(t.get("priority", "medium"), 1), t["id"]),
+        )
+        lines = []
+        for t in sorted_todos:
+            icon = self._STATUS_ICON.get(t["status"], "○")
+            pri = t["priority"]
+            tag = f"[{pri}] " if pri != "medium" else ""
+            lines.append(f"  {icon} {tag}{t['content']}")
+        return "\n".join(lines)
+
+
+class TodoWriteHandler(ToolHandler):
+    """
+    Replace the session's todo list.
+
+    Pass the complete updated list each time — this is a full replace, not a patch.
+    Status values: pending | in_progress | completed
+    Priority values: high | medium | low
+    """
+
+    def __init__(self, store: TodoStore) -> None:
+        self._store = store
+
+    @property
+    def name(self) -> str:
+        return "todo_write"
+
+    async def execute(self, args: dict[str, Any]) -> Any:
+        todos = args.get("todos", [])
+        if not isinstance(todos, list):
+            return "Error: 'todos' must be a list of objects."
+        self._store.write(todos)
+        return self._store.format()
+
+
+class TodoReadHandler(ToolHandler):
+    """Return the current session todo list."""
+
+    def __init__(self, store: TodoStore) -> None:
+        self._store = store
+
+    @property
+    def name(self) -> str:
+        return "todo_read"
+
+    async def execute(self, args: dict[str, Any]) -> Any:
+        return self._store.format()
+
+
 _HANDLER_MAP: dict[str, type[ToolHandler]] = {
     "read":   ReadHandler,
     "write":  WriteHandler,
@@ -285,6 +363,8 @@ _HANDLER_MAP: dict[str, type[ToolHandler]] = {
     "search": SearchHandler,
     "glob":   GlobHandler,
     "fetch":  WebFetchHandler,
+    # todo_write / todo_read are NOT in this map — they need a shared TodoStore
+    # instance and are registered manually in make_session().
 }
 
 

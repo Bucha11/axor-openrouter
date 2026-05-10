@@ -125,6 +125,47 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
     },
+    "todo_write": {
+        "type": "function",
+        "function": {
+            "name": "todo_write",
+            "description": (
+                "Replace the session todo list. Use this to track tasks and progress.\n"
+                "Always pass the complete list — this is a full replace, not a patch.\n"
+                "Statuses: pending | in_progress | completed\n"
+                "Priorities: high | medium | low\n"
+                "Call todo_read first if you need the current list before modifying it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "Complete replacement todo list.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id":       {"type": "string", "description": "Stable identifier, e.g. '1', '2'."},
+                                "content":  {"type": "string", "description": "Task description."},
+                                "status":   {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                                "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                            },
+                            "required": ["id", "content", "status", "priority"],
+                        },
+                    },
+                },
+                "required": ["todos"],
+            },
+        },
+    },
+    "todo_read": {
+        "type": "function",
+        "function": {
+            "name": "todo_read",
+            "description": "Return the current session todo list.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 }
 
 
