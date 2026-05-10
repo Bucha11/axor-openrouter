@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, AsyncIterator, Callable
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable
 
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
@@ -93,6 +93,7 @@ class OpenRouterExecutor(Invokable):
         self._text_callback: Callable[[str], None] | None = None
         self._tool_start_callback: Callable[[str, dict], None] | None = None
         self._tool_end_callback: Callable[[str, dict, Any], None] | None = None
+        self._approval_callback: Callable[[str, dict], Awaitable[bool]] | None = None
 
     def set_text_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback invoked with each streaming text chunk (used by axor-cli)."""
@@ -106,6 +107,16 @@ class OpenRouterExecutor(Invokable):
         """Register callbacks for tool call start and completion (used by axor-cli)."""
         self._tool_start_callback = on_start
         self._tool_end_callback = on_end
+
+    def set_approval_callback(
+        self,
+        callback: Callable[[str, dict], Awaitable[bool]],
+    ) -> None:
+        """
+        Register an async callback called before each tool executes.
+        Return True to approve, False to deny (model sees structured denial).
+        """
+        self._approval_callback = callback
 
     def get_bus(self) -> ToolResultBus:
         """Called by wrapper.py to register the tool result injection callback."""
@@ -290,6 +301,18 @@ class OpenRouterExecutor(Invokable):
 
                     if self._tool_start_callback is not None:
                         self._tool_start_callback(tool_name, args)
+
+                    # Interactive approval: check before executing.
+                    # Denial is injected directly as a tool result so the model
+                    # can respond gracefully — intent_loop never sees a denied call.
+                    if self._approval_callback is not None:
+                        user_approved = await self._approval_callback(tool_name, args)
+                        if not user_approved:
+                            denial = {"error": "tool_denied", "reason": "denied by user"}
+                            if self._tool_end_callback is not None:
+                                self._tool_end_callback(tool_name, args, denial)
+                            append_tool_result(messages, tc["id"], denial)
+                            continue
 
                     yield ExecutorEvent(
                         kind=ExecutorEventKind.TOOL_USE,
