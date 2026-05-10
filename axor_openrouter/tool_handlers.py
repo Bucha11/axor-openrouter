@@ -225,6 +225,58 @@ class GlobHandler(ToolHandler):
         return "\n".join(matches) if matches else "No matches found."
 
 
+class WebFetchHandler(ToolHandler):
+    """
+    Fetch the content of a URL. Returns up to max_bytes of the response body.
+
+    Args:
+        url          URL to fetch (http/https)
+        max_bytes    Max bytes to return (default 65536 = 64 KB)
+        timeout      Request timeout in seconds (default 15)
+    """
+
+    _MAX_BYTES_DEFAULT = 65_536  # 64 KB
+
+    @property
+    def name(self) -> str:
+        return "fetch"
+
+    async def execute(self, args: dict[str, Any]) -> Any:
+        import urllib.request
+        import urllib.error
+
+        url: str = args.get("url") or args.get("uri") or ""
+        if not url:
+            return "Error: 'url' argument is required."
+        if not url.startswith(("http://", "https://")):
+            return f"Error: only http/https URLs are supported (got {url!r})."
+
+        max_bytes: int = int(args.get("max_bytes", self._MAX_BYTES_DEFAULT))
+        timeout: int = int(args.get("timeout", 15))
+
+        def _get() -> str:
+            req = urllib.request.Request(url, headers={"User-Agent": "axor/1.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read(max_bytes)
+                    charset = resp.headers.get_content_charset() or "utf-8"
+                    content = raw.decode(charset, errors="replace")
+                    truncated = len(raw) >= max_bytes
+                    ct = resp.headers.get_content_type() or ""
+                    header = f"[{resp.status} {url}  content-type: {ct}]\n"
+                    suffix = f"\n[truncated at {max_bytes} bytes]" if truncated else ""
+                    return header + content + suffix
+            except urllib.error.HTTPError as e:
+                return f"HTTP {e.code}: {e.reason}  ({url})"
+            except urllib.error.URLError as e:
+                return f"URL error: {e.reason}  ({url})"
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(_get), timeout=timeout + 2)
+        except asyncio.TimeoutError:
+            return f"Timeout fetching {url} after {timeout}s"
+
+
 _HANDLER_MAP: dict[str, type[ToolHandler]] = {
     "read":   ReadHandler,
     "write":  WriteHandler,
@@ -232,6 +284,7 @@ _HANDLER_MAP: dict[str, type[ToolHandler]] = {
     "bash":   BashHandler,
     "search": SearchHandler,
     "glob":   GlobHandler,
+    "fetch":  WebFetchHandler,
 }
 
 
