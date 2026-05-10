@@ -26,7 +26,14 @@ def build_messages(
         skill_parts.append(f"Active execution constraints:\n{constraints_text}")
 
     if skill_parts:
-        messages.append({"role": "system", "content": "\n\n---\n\n".join(skill_parts)})
+        messages.append({
+            "role": "system",
+            "content": "\n\n---\n\n".join(skill_parts),
+            # cache_control: OpenRouter forwards this to Anthropic prompt caching.
+            # The system message is stable across turns (skills don't change mid-session)
+            # so it's the highest-value caching target.
+            "cache_control": {"type": "ephemeral"},
+        })
 
     # Context message: working summary + memory/parent exports
     ctx_parts: list[str] = []
@@ -43,9 +50,15 @@ def build_messages(
             ctx_parts.append(f.content)
 
     if ctx_parts:
-        messages.append({"role": "user", "content": "\n\n".join(ctx_parts)})
+        messages.append({
+            "role": "user",
+            "content": "\n\n".join(ctx_parts),
+            "cache_control": {"type": "ephemeral"},
+        })
         messages.append({"role": "assistant", "content": "Understood."})
 
+    # envelope.task may be a plain string or a content array (multimodal).
+    # Pass it through unchanged — OpenRouter accepts both.
     messages.append({"role": "user", "content": envelope.task})
     return messages
 

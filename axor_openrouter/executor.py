@@ -80,6 +80,7 @@ class OpenRouterExecutor(Invokable):
         tier_mapper: "TierMapper | None" = None,
         model_selector: "SmartModelSelector | None" = None,
         provider_prefs: "ProviderPrefs | None" = None,
+        thinking_budget: int | None = None,
     ) -> None:
         self._api_key        = api_key
         self._default_model  = model
@@ -87,6 +88,7 @@ class OpenRouterExecutor(Invokable):
         self._tier_mapper    = tier_mapper
         self._model_selector = model_selector
         self._provider_prefs = provider_prefs
+        self._thinking_budget = thinking_budget
         self._bus            = ToolResultBus()
         self._ledger: list[dict] = []
         self._dead_models: set[str] = set()  # 404'd models, skipped on next selection
@@ -385,6 +387,8 @@ class OpenRouterExecutor(Invokable):
             provider_dict = self._provider_prefs.to_dict()
             if provider_dict:
                 body["provider"] = provider_dict
+        if self._thinking_budget is not None:
+            body["thinking"] = {"type": "enabled", "budget_tokens": self._thinking_budget}
         return body
 
     def _inject_brevity(self, messages: list[dict]) -> list[dict]:

@@ -72,6 +72,8 @@ def make_session(
     system_prompt: str | None = None,
     telemetry: Any = None,
     sort: str = "quality",
+    thinking_budget: int | None = None,
+    _extra_loaders: list | None = None,
     **kwargs: Any,
 ) -> GovernedSession:
     """
@@ -112,11 +114,14 @@ def make_session(
         tier_mapper=tier_mapper,
         model_selector=model_selector,
         provider_prefs=provider_prefs,
+        thinking_budget=thinking_budget,
     )
 
     extension_loaders = []
     if load_skills:
         extension_loaders.append(GenericSkillLoader())
+    if _extra_loaders:
+        extension_loaders.extend(_extra_loaders)
 
     return GovernedSession(
         executor=executor,
