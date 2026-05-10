@@ -91,10 +91,21 @@ class OpenRouterExecutor(Invokable):
         self._ledger: list[dict] = []
         self._dead_models: set[str] = set()  # 404'd models, skipped on next selection
         self._text_callback: Callable[[str], None] | None = None
+        self._tool_start_callback: Callable[[str, dict], None] | None = None
+        self._tool_end_callback: Callable[[str, dict, Any], None] | None = None
 
     def set_text_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback invoked with each streaming text chunk (used by axor-cli)."""
         self._text_callback = callback
+
+    def set_tool_callbacks(
+        self,
+        on_start: Callable[[str, dict], None],
+        on_end: Callable[[str, dict, Any], None],
+    ) -> None:
+        """Register callbacks for tool call start and completion (used by axor-cli)."""
+        self._tool_start_callback = on_start
+        self._tool_end_callback = on_end
 
     def get_bus(self) -> ToolResultBus:
         """Called by wrapper.py to register the tool result injection callback."""
@@ -277,6 +288,9 @@ class OpenRouterExecutor(Invokable):
                     except json.JSONDecodeError:
                         args = {}
 
+                    if self._tool_start_callback is not None:
+                        self._tool_start_callback(tool_name, args)
+
                     yield ExecutorEvent(
                         kind=ExecutorEventKind.TOOL_USE,
                         payload={
@@ -287,6 +301,10 @@ class OpenRouterExecutor(Invokable):
                         node_id=envelope.node_id,
                     )
                     _, result = await self._bus.wait()
+
+                    if self._tool_end_callback is not None:
+                        self._tool_end_callback(tool_name, args, result)
+
                     append_tool_result(messages, tc["id"], result)
                 continue
 
