@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, Callable
 
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
@@ -90,6 +90,11 @@ class OpenRouterExecutor(Invokable):
         self._bus            = ToolResultBus()
         self._ledger: list[dict] = []
         self._dead_models: set[str] = set()  # 404'd models, skipped on next selection
+        self._text_callback: Callable[[str], None] | None = None
+
+    def set_text_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback invoked with each streaming text chunk (used by axor-cli)."""
+        self._text_callback = callback
 
     def get_bus(self) -> ToolResultBus:
         """Called by wrapper.py to register the tool result injection callback."""
@@ -224,6 +229,8 @@ class OpenRouterExecutor(Invokable):
                     if choices:
                         delta_text = choices[0].get("delta", {}).get("content", "")
                         if delta_text:
+                            if self._text_callback is not None:
+                                self._text_callback(delta_text)
                             yield ExecutorEvent(
                                 kind=ExecutorEventKind.TEXT,
                                 payload={"text": delta_text},
