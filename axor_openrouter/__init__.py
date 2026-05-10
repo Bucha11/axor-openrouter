@@ -38,6 +38,7 @@ from axor_openrouter.cascade.tiers import TierSpec, TierMapper
 from axor_openrouter.routing.provider_prefs import ProviderPrefs
 from axor_openrouter.routing.model_selector import SmartModelSelector
 from axor_openrouter.tool_handlers import make_capability_executor
+from axor_openrouter.skills import GenericSkillLoader
 
 __all__ = [
     "make_session",
@@ -65,7 +66,6 @@ def make_session(
     # Provider options
     max_prompt_price: float | None = None,
     allow_fallbacks: bool = True,
-    # axor-cli compat kwargs (ignored)
     load_skills: bool = True,
     load_plugins: bool = True,
     soft_token_limit: int | None = None,
@@ -114,9 +114,14 @@ def make_session(
         provider_prefs=provider_prefs,
     )
 
+    extension_loaders = []
+    if load_skills:
+        extension_loaders.append(GenericSkillLoader())
+
     return GovernedSession(
         executor=executor,
         capability_executor=cap_executor,
+        extension_loaders=extension_loaders,
         soft_token_limit=soft_token_limit,
         telemetry=telemetry,
     )
