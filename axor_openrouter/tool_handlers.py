@@ -129,7 +129,7 @@ class SearchHandler(ToolHandler):
     async def _rg(
         self, pattern: str, path: str, include: str, context: int, ignore_case: bool
     ) -> str:
-        cmd = ["rg", "--follow", "--line-number", "--no-heading", "--color=never"]
+        cmd = ["rg", "--follow", "--no-ignore", "--line-number", "--no-heading", "--color=never"]
         if ignore_case:
             cmd.append("--ignore-case")
         if context > 0:
