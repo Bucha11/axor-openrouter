@@ -40,25 +40,28 @@ class RatesCatalog:
         for entry in data.get("data", []):
             model_id = entry.get("id", "")
             pricing = entry.get("pricing", {})
+            # Only the price parsing may legitimately fail on malformed data —
+            # keep the guard tight around it so a genuine construction error in
+            # TokenCostRates surfaces instead of silently emptying the catalog.
             try:
                 prompt_cost = float(pricing.get("prompt", 0)) * 1_000_000
                 completion_cost = float(pricing.get("completion", 0)) * 1_000_000
-                self._rates[model_id] = TokenCostRates(
-                    input_cost_per_million=prompt_cost,
-                    output_cost_per_million=completion_cost,
-                    cache_read_cost_per_million=float(
-                        pricing.get("image", 0)
-                    ) * 1_000_000,
-                    cache_write_cost_per_million=0.0,
-                )
             except (TypeError, ValueError):
                 continue
+            self._rates[model_id] = TokenCostRates(
+                input_per_m=prompt_cost,
+                output_per_m=completion_cost,
+            )
         self._fetched_at = time.monotonic()
 
     def get(self, model_id: str) -> TokenCostRates | None:
         return self._rates.get(model_id)
 
     def is_stale(self) -> bool:
+        # Never-fetched catalog (_fetched_at sentinel 0.0) is always stale,
+        # independent of the host's monotonic-clock origin.
+        if self._fetched_at == 0.0:
+            return True
         return (time.monotonic() - self._fetched_at) > self._ttl
 
     def all_models(self) -> list[str]:

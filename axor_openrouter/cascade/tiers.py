@@ -95,3 +95,19 @@ class TierMapper:
             if spec.matches(depth):
                 return spec
         return None
+
+
+def load_cascade_config_if_exists(config_path: str | None = None) -> list[TierSpec]:
+    """Return the cascade tiers from ``config_path`` if it loads, else defaults.
+
+    Thin convenience wrapper over ``cascade.config.load_cascade_config`` that
+    yields a ``list[TierSpec]`` (the shape ``TierMapper`` is constructed from)
+    rather than a ready-made mapper, so the session factory can wrap it itself.
+    Falls back to ``DEFAULT_TIERS`` whenever the config is missing or unreadable.
+    """
+    # Imported lazily to avoid a tiers <-> config import cycle.
+    from axor_openrouter.cascade.config import load_cascade_config
+
+    mapper = load_cascade_config(config_path)
+    tiers = list(getattr(mapper, "_tiers", []))
+    return tiers or list(DEFAULT_TIERS)

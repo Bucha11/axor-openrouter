@@ -39,8 +39,14 @@ from .executor import OpenRouterExecutor
 from .routing.provider_prefs import ProviderPrefs
 from .routing.fallbacks import DEFAULT_FALLBACKS
 from .routing.byok import BYOKConfig
+from .security import SecurityObservers, build_observers
 
-__all__ = ["make_session", "OpenRouterExecutor"]
+__all__ = [
+    "make_session",
+    "OpenRouterExecutor",
+    "SecurityObservers",
+    "build_observers",
+]
 
 
 def make_session(
@@ -63,10 +69,26 @@ def make_session(
     response_cache: bool = False,
     # Policy
     policy: ExecutionPolicy | None = None,
+    # Optional security observers (P-34: behind the [security] extra)
+    probe_pipeline=None,
+    enable_sentinel: bool = False,
     # Extra executor kwargs forwarded verbatim
     **executor_kwargs: Any,
 ) -> GovernedSession:
-    """Build a fully-wired GovernedSession backed by OpenRouter."""
+    """Build a fully-wired GovernedSession backed by OpenRouter.
+
+    Optional security observers are wired here — the adapter is the composition
+    root. Passing ``probe_pipeline`` enables an axor-probe context tap; setting
+    ``enable_sentinel=True`` enables an axor-sentinel session sink. Both require
+    the ``[security]`` extra (``pip install axor-openrouter[security]``) and are
+    lazily imported, so the base install never depends on probe/sentinel.
+    """
+    # Composition root: pull any caller-supplied taps/sinks out of the forwarded
+    # kwargs (they belong to GovernedSession, not the executor) so the optional
+    # security observers can be merged in alongside them.
+    context_taps = list(executor_kwargs.pop("context_taps", None) or [])
+    session_sinks = list(executor_kwargs.pop("session_sinks", None) or [])
+
     tiers = (
         load_cascade_config_if_exists(tier_config)
         if tier_config
@@ -100,8 +122,21 @@ def make_session(
         deterministic=deterministic,
     )
 
-    return GovernedSession(
+    observers = build_observers(
+        probe_pipeline=probe_pipeline,
+        enable_sentinel=enable_sentinel,
+    )
+    if observers.context_tap is not None:
+        context_taps.append(observers.context_tap)
+    if observers.session_sink is not None:
+        session_sinks.append(observers.session_sink)
+
+    session = GovernedSession(
         executor=executor,
         envelope=envelope,
         policy=policy or ExecutionPolicy(),
+        context_taps=context_taps or None,
+        session_sinks=session_sinks or None,
     )
+    session.axor_security = observers
+    return session
