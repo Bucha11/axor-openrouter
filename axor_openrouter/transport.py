@@ -129,11 +129,12 @@ class StreamAccumulator:
         self._usage: dict = {}
 
     def feed(self, chunk: dict) -> None:
-        # top-level usage chunk (comes with empty choices in some providers)
-        if "usage" in chunk and chunk.get("choices", []):
-            self._usage = chunk["usage"]
-        elif "usage" in chunk:
-            self._usage = chunk["usage"]
+        # Capture usage only when actually present. Some providers send it in a
+        # final chunk (often with empty choices); others send an explicit null
+        # usage on non-final chunks, which must not clobber the {} default.
+        usage = chunk.get("usage")
+        if usage:
+            self._usage = usage
 
         choices = chunk.get("choices", [])
         if not choices:

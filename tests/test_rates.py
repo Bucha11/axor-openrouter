@@ -93,4 +93,4 @@ async def test_fetch_rates_correct_values(catalog):
     rates = catalog.get("anthropic/claude-opus-4-7")
     assert rates is not None
     # 0.000015 * 1_000_000 = 15.0 $/M
-    assert abs(rates.input_cost_per_million - 15.0) < 0.01
+    assert abs(rates.input_per_m - 15.0) < 0.01
