@@ -22,6 +22,7 @@ dev = [
     "respx>=0.21",
     "anyio[trio]",
 ]
+security = ["axor-probe", "axor-sentinel"]
 
 [project.entry-points."axor.adapters"]
 openrouter = "axor_openrouter:make_session"
