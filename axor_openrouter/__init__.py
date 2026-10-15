@@ -80,7 +80,10 @@ def make_session(
     ``governance`` is a ``GovernanceConfig``, its YAML path or its mapping (``None``:
     an empty configuration — the gate still runs); ``confirmer`` the operator's L4
     channel; ``structured`` the platform's parser of a description source's output
-    (MODEL.md 9.15). With ``daemon_socket`` the daemon's own ``--governance`` decides.
+    (MODEL.md 9.15), ``structured(tool, result) -> structure | None`` — written by the
+    operator for the tools it deploys (this package ships none); without it no description
+    grant is computed and a call only a description would authorize is refused. With
+    ``daemon_socket`` the daemon's own ``--governance`` (and ``--structured``) decide.
 
     Optional security observers: ``probe_pipeline`` wires an axor-probe context tap,
     ``enable_sentinel=True`` an axor-sentinel session sink (both need ``[security]``).
