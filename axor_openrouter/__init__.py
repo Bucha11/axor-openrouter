@@ -6,137 +6,125 @@ Quick-start
 
     session = make_session(
         api_key="sk-or-...",
-        task="explain this code",
-        context_text="def foo(): ...",
+        handlers=[MyReadHandler(), MySendHandler()],   # axor_core ToolHandler
+        governance="governance.yaml",                  # the kernel gate's config
     )
-    async for event in session.stream():
-        ...
+    result = await session.run("explain this code")
+
+Every tool call the model makes goes through the session's loop and then the
+current kernel gate (``gate.Gate`` around a ``ToolCallGovernor``) before its
+handler runs; with ``daemon_socket`` the daemon runs the handlers and the gate.
 
 Advanced
 --------
-Pass keyword arguments to override defaults:
-
     make_session(
         api_key=...,
-        task=...,
         tier_config="axor.openrouter.toml",   # custom cascade
         sort="throughput",
         max_prompt_price=5.0,
-        enable_cache=True,
-        response_cache=False,
+        tool_schemas=[...],                   # OpenAI function schemas of the handlers
     )
 """
 from __future__ import annotations
 
 from typing import Any
 
-from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.policy import ExecutionPolicy
-from axor_core.worker.session import GovernedSession
 
 from .cascade.tiers import DEFAULT_TIERS, TierMapper, load_cascade_config_if_exists
 from .executor import OpenRouterExecutor
 from .routing.provider_prefs import ProviderPrefs
-from .routing.fallbacks import DEFAULT_FALLBACKS
-from .routing.byok import BYOKConfig
 from .security import SecurityObservers, build_observers
+from .gate import Gate
+from .capability_gate import GatedCapabilityExecutor, GatedSession, GovernanceRefused
 
 __all__ = [
     "make_session",
     "OpenRouterExecutor",
     "SecurityObservers",
     "build_observers",
+    "Gate",
+    "GatedCapabilityExecutor",
+    "GatedSession",
+    "GovernanceRefused",
 ]
 
 
 def make_session(
     *,
     api_key: str,
-    task: str,
-    context_text: str = "",
-    depth: int = 0,
-    parent_node_id: str | None = None,
-    cache_hints: dict[str, Any] | None = None,
-    deterministic: bool = False,
+    handlers: "list[Any] | tuple[Any, ...]" = (),
+    tool_schemas: "list[dict] | None" = None,
+    governance: Any = None,
+    confirmer: Any = None,
+    structured: Any = None,
+    daemon_socket: "str | None" = None,
+    model: "str | None" = None,
     # Routing / cascade
-    tier_config: str | None = None,
+    tier_config: "str | None" = None,
     sort: str = "quality",
-    max_prompt_price: float | None = None,
+    max_prompt_price: "float | None" = None,
     fallback: bool = True,
-    byok: BYOKConfig | None = None,
-    # Cache
-    enable_cache: bool = True,
-    response_cache: bool = False,
+    transport: Any = None,
     # Policy
-    policy: ExecutionPolicy | None = None,
+    policy: "ExecutionPolicy | None" = None,
     # Optional security observers (P-34: behind the [security] extra)
     probe_pipeline=None,
     enable_sentinel: bool = False,
-    # Extra executor kwargs forwarded verbatim
-    **executor_kwargs: Any,
-) -> GovernedSession:
-    """Build a fully-wired GovernedSession backed by OpenRouter.
+    **session_kwargs: Any,
+) -> GatedSession:
+    """Build a ``GovernedSession`` backed by OpenRouter whose tools run behind the kernel gate.
 
-    Optional security observers are wired here — the adapter is the composition
-    root. Passing ``probe_pipeline`` enables an axor-probe context tap; setting
-    ``enable_sentinel=True`` enables an axor-sentinel session sink. Both require
-    the ``[security]`` extra (``pip install axor-openrouter[security]``) and are
-    lazily imported, so the base install never depends on probe/sentinel.
+    ``handlers`` are ``axor_core`` ``ToolHandler``s; ``tool_schemas`` their OpenAI
+    function schemas (the built-in read/write/bash/search/glob schemas need none).
+    ``governance`` is a ``GovernanceConfig``, its YAML path or its mapping (``None``:
+    an empty configuration — the gate still runs); ``confirmer`` the operator's L4
+    channel; ``structured`` the platform's parser of a description source's output
+    (MODEL.md 9.15). With ``daemon_socket`` the daemon's own ``--governance`` decides.
+
+    Optional security observers: ``probe_pipeline`` wires an axor-probe context tap,
+    ``enable_sentinel=True`` an axor-sentinel session sink (both need ``[security]``).
     """
-    # Composition root: pull any caller-supplied taps/sinks out of the forwarded
-    # kwargs (they belong to GovernedSession, not the executor) so the optional
-    # security observers can be merged in alongside them.
-    context_taps = list(executor_kwargs.pop("context_taps", None) or [])
-    session_sinks = list(executor_kwargs.pop("session_sinks", None) or [])
+    from .transport import OpenRouterTransport
 
-    tiers = (
-        load_cascade_config_if_exists(tier_config)
-        if tier_config
-        else DEFAULT_TIERS
-    )
+    tiers = load_cascade_config_if_exists(tier_config) if tier_config else DEFAULT_TIERS
     tier_mapper = TierMapper(tiers)
-
-    provider_prefs = ProviderPrefs(
-        sort=sort,
-        max_prompt_price=max_prompt_price,
-        allow_fallbacks=fallback,
-    )
-
+    provider_prefs = ProviderPrefs(sort=sort, max_prompt_price=max_prompt_price,
+                                   allow_fallbacks=fallback)
     executor = OpenRouterExecutor(
         api_key=api_key,
+        model=model or tier_mapper.resolve(0),
+        transport=transport or OpenRouterTransport(),
         tier_mapper=tier_mapper,
         provider_prefs=provider_prefs,
-        fallbacks=DEFAULT_FALLBACKS,
-        byok=byok,
-        enable_cache=enable_cache,
-        response_cache=response_cache,
-        **executor_kwargs,
+        tool_schemas=tool_schemas,
     )
 
-    envelope = ExecutionEnvelope(
-        task=task,
-        context_text=context_text,
-        depth=depth,
-        parent_node_id=parent_node_id,
-        cache_hints=cache_hints,
-        deterministic=deterministic,
-    )
+    if daemon_socket is not None:
+        if governance is not None or confirmer is not None or handlers:
+            raise ValueError("with daemon_socket the daemon runs the handlers and its "
+                             "--governance decides; pass them to the daemon, not here")
+        from axor_core.capability.daemon_client import DaemonCapabilityClient
+        cap: Any = DaemonCapabilityClient(socket_path=daemon_socket)
+    else:
+        cap = GatedCapabilityExecutor(
+            Gate.from_config(governance or {}, confirmer=confirmer, structured=structured))
+        for h in handlers:
+            cap.register(h)
 
-    observers = build_observers(
-        probe_pipeline=probe_pipeline,
-        enable_sentinel=enable_sentinel,
-    )
+    context_taps = list(session_kwargs.pop("context_taps", None) or [])
+    observers = build_observers(probe_pipeline=probe_pipeline, enable_sentinel=enable_sentinel)
     if observers.context_tap is not None:
         context_taps.append(observers.context_tap)
-    if observers.session_sink is not None:
-        session_sinks.append(observers.session_sink)
+    if observers.session_sink is not None and "session_sink" not in session_kwargs:
+        session_kwargs["session_sink"] = observers.session_sink
 
-    session = GovernedSession(
+    session = GatedSession(
         executor=executor,
-        envelope=envelope,
-        policy=policy or ExecutionPolicy(),
+        capability_executor=cap,
+        default_policy=policy,
         context_taps=context_taps or None,
-        session_sinks=session_sinks or None,
+        **session_kwargs,
     )
     session.axor_security = observers
     return session

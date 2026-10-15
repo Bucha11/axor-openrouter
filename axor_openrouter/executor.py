@@ -52,6 +52,7 @@ class OpenRouterExecutor(Invokable):
         budget_subscriber: "BudgetSubscriber | None" = None,
         adaptive_router: "AdaptiveRouter | None" = None,
         cache_monitor: "CacheHealthMonitor | None" = None,
+        tool_schemas: "list[dict] | None" = None,
     ) -> None:
         self._api_key          = api_key
         self._default_model    = model
@@ -61,6 +62,7 @@ class OpenRouterExecutor(Invokable):
         self._budget_subscriber = budget_subscriber
         self._adaptive_router  = adaptive_router
         self._cache_monitor    = cache_monitor
+        self._tool_schemas     = list(tool_schemas or [])
         self._bus              = ToolResultBus()
 
     def get_bus(self) -> ToolResultBus:
@@ -84,7 +86,10 @@ class OpenRouterExecutor(Invokable):
         )
         model = self._resolve_model(depth)
         messages = build_messages(envelope)
-        tools = build_tools_with_extensions(envelope)
+        allowed = envelope.capabilities.allowed_tools
+        tools = build_tools_with_extensions(
+            envelope, [t for t in self._tool_schemas
+                       if t.get("function", {}).get("name") in allowed])
 
         # record routing decision in trace
         yield ExecutorEvent(
